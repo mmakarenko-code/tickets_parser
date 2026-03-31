@@ -133,7 +133,7 @@ def final_collapse(df):
         else:
             final_rows.append(pd.Series(records[i]))
 
-    return pd.DataFrame(final_rows).drop(columns=['Название события', 'priority'], errors='ignore')
+    return pd.DataFrame(final_rows).drop(columns=['priority'], errors='ignore')
 
 
 def parse_ticket():
@@ -364,7 +364,6 @@ ticket = parse_ticket()
 df_combined = pd.concat([ticket, kass, afisha], ignore_index=True)
 df_combined['Название события'] = df_combined['Название события'].apply(clean_string)
 df_combined['Дата проведения'] = df_combined['Дата проведения'].apply(convert_date)
-
 driver.close()
 result = final_collapse(df_combined)
 
