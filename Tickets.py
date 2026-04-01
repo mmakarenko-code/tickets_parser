@@ -413,4 +413,3 @@ df_combined['Оригинальное название'] = df_combined['Назв
 df_combined['Название события'] = df_combined['Название события'].apply(clean_string)
 driver.close()
 result = final_collapse(df_combined)
-result.to_csv('01.04_out.csv')
