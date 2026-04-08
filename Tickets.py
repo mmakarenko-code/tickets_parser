@@ -413,3 +413,5 @@ df_combined['Оригинальное название'] = df_combined['Назв
 df_combined['Название события'] = df_combined['Название события'].apply(clean_string)
 driver.close()
 result = final_collapse(df_combined)
+result['Дата проведения'] = result['Дата проведения'] + ' ' + result['Время проведения']
+result = result.drop(columns=['Время проведения'], errors='ignore')
