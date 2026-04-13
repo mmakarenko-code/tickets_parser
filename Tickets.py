@@ -46,27 +46,25 @@ def convert_bezkassira(text):
         'июн': '06', 'июл': '07', 'авг': '08', 'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12'
     }
 
-    pattern = r"(\d{1,2})\s+([а-яА-Я]+)(?:\s+(\d{4}))?"
+    cleaned = ' '.join(text.split())
 
-    matches = re.finditer(pattern, text)
-    formatted_dates = []
+    date_pattern = r'(\d{1,2})\s+([а-я]+)\s+(\d{4})'
+    matches = list(re.finditer(date_pattern, cleaned))
 
-    for match in matches:
+    for match in reversed(matches):
         day = match.group(1).zfill(2)
-        month_word = match.group(2).lower()[:3]
-        month = months_map.get(month_word, "01")
-
+        month_ru = match.group(2).lower()
         year = match.group(3)
-        if not year:
-            global_year = re.search(r'\d{4}', text)
-            year = global_year.group(0) if global_year else "2026"
 
-        formatted_dates.append(f"{day}.{month}.{year}")
+        month = months_map.get(month_ru, months_map.get(month_ru[:3], '??'))
 
-    if "—" in text:
-        return " — ".join(formatted_dates)
+        start, end = match.start(), match.end()
+        cleaned = cleaned[:start] + f"{day}.{month}.{year}" + cleaned[end:]
 
-    return ", ".join(formatted_dates)
+    cleaned = re.sub(r'\s*,\s*', ' ', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+    return [f"{cleaned}"]
 
 
 def convert_afisha(date_list):
@@ -90,7 +88,7 @@ def convert_afisha(date_list):
             month = months_map.get(month_key, "01")
             formatted_dates.append(f"{day}.{month}.2026")
 
-    return ", ".join(formatted_dates)
+    return formatted_dates
 
 
 def is_empty(val):
@@ -117,11 +115,13 @@ def merge_records(group):
         combined_ids = sorted(list(ids_1 | ids_2), key=lambda x: int(x) if str(x).isdigit() else 0)
         base['ID События'] = ", ".join(map(str, combined_ids))
 
-        for col in ['Дата проведения', 'Время проведения']:
-            v1 = base[col] if isinstance(base[col], list) else ([base[col]] if not is_empty(base[col]) else [])
-            v2 = row[col] if isinstance(row[col], list) else ([row[col]] if not is_empty(row[col]) else [])
-            combined = set(str(x) for x in (v1 + v2) if not is_empty(x))
-            base[col] = ", ".join(sorted(combined))
+        v1 = base['Дата проведения'] if isinstance(base['Дата проведения'], list) else (
+            [base['Дата проведения']] if not is_empty(base['Дата проведения']) else [])
+        v2 = row['Дата проведения'] if isinstance(row['Дата проведения'], list) else (
+            [row['Дата проведения']] if not is_empty(row['Дата проведения']) else [])
+
+        combined = sorted(set(str(d).strip('[]').strip() for d in (v1 + v2) if not is_empty(d)))
+        base['Дата проведения'] = ", ".join(combined) if combined else ""
 
         for col in ['Площадка/место проведения', 'Описание события', 'Организатор']:
             if is_empty(base.get(col)) and not is_empty(row.get(col)):
@@ -197,11 +197,17 @@ def parse_ticket():
         elem['Название события'] = driver.find_element(By.CLASS_NAME, 'title').text.replace('\n', ' ').strip()
         elem['ID События'] = ""
         try:
-            elem['Дата проведения'] = driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[0].strip()
-            elem['Время проведения'] = driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[1].strip()
+            elem['Дата проведения'] = driver.find_element(By.CLASS_NAME, 'content__event-date').text.strip() + ' ' +  \
+                                driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[1].strip()
+            try:
+                time_event = driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[1].strip()
+                elem['Дата проведения'] = driver.find_element(By.CLASS_NAME, 'content__event-date').text.strip().replace(time_event, '') + ' ' + time_event
+            except:
+                pass
         except:
             elem['Дата проведения'] = ''
-            elem['Время проведения'] = ''
+        if elem['Дата проведения'] != '':
+            elem['Дата проведения'] = [re.sub(r',\s+', ' ', elem['Дата проведения'])]
         try:
             elem['Площадка/место проведения'] = driver.find_element(By.CLASS_NAME, 'sidebar-box__event-venue').text.replace('\n', ' ').strip()
         except:
@@ -273,7 +279,6 @@ def parse_afisha():
             time_event.append(re.sub(r'\n.*?\n', ' ', one.text.strip()))
         elem['ID События'] = int(df.loc[i, 'links'].split('/')[-1])
         elem['Дата проведения'] = convert_afisha(time_event)
-        elem['Время проведения'] = ''
         try:
             elem['Площадка/место проведения'] = table.find_elements(By.CLASS_NAME, 'link-blue')[-1].text
         except:
@@ -342,15 +347,14 @@ def parse_bezkassira():
         try:
             time_event = driver.find_element(By.CLASS_NAME, 'add-calendar')
             try:
-                time_ev = time_event.find_element(By.TAG_NAME, 'small').text
-                elem['Дата проведения'] = convert_bezkassira(time_event.text.replace(time_ev, '').strip().replace('\n', ''))
-                elem['Время проведения'] = time_ev
+                enter = time_event.find_element(By.CLASS_NAME, 'time-enter').text
+                time_event = time_event.text.replace(enter, '').replace('\n', ' ').strip()
             except:
-                elem['Дата проведения'] = convert_bezkassira(time_event.text.strip().replace('\n', ''))
-                elem['Время проведения'] = ''
+                time_event = time_event.text.replace('\n', '').strip()
+            time_event = re.sub(r'(\d)(—)', r'\1 —', time_event)
+            elem['Дата проведения'] = convert_bezkassira(time_event)
         except:
             elem['Дата проведения'] = ''
-            elem['Время проведения'] = ''
         try:
             elem['Площадка/место проведения'] = driver.find_elements(By.CLASS_NAME, 'sign-name').text.strip()
         except:
@@ -413,5 +417,3 @@ df_combined['Оригинальное название'] = df_combined['Назв
 df_combined['Название события'] = df_combined['Название события'].apply(clean_string)
 driver.close()
 result = final_collapse(df_combined)
-result['Дата проведения'] = result['Дата проведения'] + ' ' + result['Время проведения']
-result = result.drop(columns=['Время проведения'], errors='ignore')
