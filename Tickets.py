@@ -67,28 +67,35 @@ def convert_bezkassira(text):
     return [f"{cleaned}"]
 
 
-def convert_afisha(date_list):
+def convert_afisha(date_list, year="2026"):
     if not date_list or not isinstance(date_list, list):
         return ""
 
     months_map = {
         'янв': '01', 'фев': '02', 'мар': '03', 'апр': '04',
-        'май': '05', 'мая': '05', 'июн': '06', 'июл': '07',
-        'авг': '08', 'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12'
+        'мая': '05', 'июн': '06', 'июл': '07', 'авг': '08',
+        'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12'
     }
+    pattern = r'(\d{1,2})\s+([а-яА-Я]+)\.?(?:\s+(\d{2}:\d{2}))?'
 
-    formatted_dates = []
-
-    for item in date_list:
-        match = re.search(r'(\d{1,2})\s+([а-яА-Я]+)', str(item))
-
+    result = []
+    for date_str in date_list:
+        date_str = date_str.replace('Продано', '').strip()
+        match = re.search(pattern, date_str)
         if match:
-            day = match.group(1).zfill(2)
-            month_key = match.group(2).lower()[:3]
-            month = months_map.get(month_key, "01")
-            formatted_dates.append(f"{day}.{month}.2026")
+            day, month_str, time = match.groups()
+            month_key = month_str[:3].lower()
+            month_num = months_map.get(month_key, '01')
 
-    return formatted_dates
+            formatted_date = f"{int(day):02d}.{month_num}.{year}"
+            if time:
+                formatted_date += f" {time}"
+
+            result.append(formatted_date)
+        else:
+            result.append(date_str)
+
+    return result
 
 
 def is_empty(val):
@@ -274,9 +281,17 @@ def parse_afisha():
             continue
         table = driver.find_element(By.CLASS_NAME, 'tickets__table')
         time_event = []
-        times = table.find_elements(By.CLASS_NAME, 'pad-right-td')
-        for one in times:
-            time_event.append(re.sub(r'\n.*?\n', ' ', one.text.strip()))
+        for one in table.find_elements(By.TAG_NAME, 'tr'):
+            try:
+                date_block = one.find_element(By.CLASS_NAME, 'pad-right-td')
+                date = re.sub(r'\n.*?\n', ' ', date_block.text.strip())
+                try:
+                    date = date + ' ' + one.find_element(By.CLASS_NAME, 'button__ticket').find_element(By.TAG_NAME, 'span').text.strip()
+                except:
+                    pass
+                time_event.append(date)
+            except:
+                pass
         elem['ID События'] = int(df.loc[i, 'links'].split('/')[-1])
         elem['Дата проведения'] = convert_afisha(time_event)
         try:
