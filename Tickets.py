@@ -37,34 +37,32 @@ def clean_string(text):
     return text
 
 
-def convert_bezkassira(text):
-    if not text or not isinstance(text, str):
-        return ""
-
+def convert_bezkassira(time_event):
     months_map = {
         'янв': '01', 'фев': '02', 'мар': '03', 'апр': '04', 'май': '05', 'мая': '05',
         'июн': '06', 'июл': '07', 'авг': '08', 'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12'
     }
 
-    cleaned = ' '.join(text.split())
+    cleaned = ' '.join(time_event.split())
 
-    date_pattern = r'(\d{1,2})\s+([а-я]+)\s+(\d{4})'
-    matches = list(re.finditer(date_pattern, cleaned))
+    cleaned = re.sub(r'(\d{1,2})\s*[-–—]\s*(\d{1,2})\.(\d{2})\.(\d{4})',
+                     lambda
+                         m: f"{m.group(1).zfill(2)}.{m.group(3)}.{m.group(4)} — {m.group(2).zfill(2)}.{m.group(3)}.{m.group(4)}",
+                     cleaned)
 
-    for match in reversed(matches):
-        day = match.group(1).zfill(2)
-        month_ru = match.group(2).lower()
-        year = match.group(3)
+    cleaned = re.sub(r'(\d{1,2})\s*[-–—]\s*(\d{1,2})\s+([а-я]+)\s+(\d{4})',
+                     lambda
+                         m: f"{m.group(1).zfill(2)}.{months_map[m.group(3).lower()]}.{m.group(4)} — {m.group(2).zfill(2)}.{months_map[m.group(3).lower()]}.{m.group(4)}",
+                     cleaned)
 
-        month = months_map.get(month_ru, months_map.get(month_ru[:3], '??'))
-
-        start, end = match.start(), match.end()
-        cleaned = cleaned[:start] + f"{day}.{month}.{year}" + cleaned[end:]
+    cleaned = re.sub(r'(\d{1,2})\s+([а-я]+)\s+(\d{4})',
+                     lambda m: f"{m.group(1).zfill(2)}.{months_map[m.group(2).lower()]}.{m.group(3)}",
+                     cleaned)
 
     cleaned = re.sub(r'\s*,\s*', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
 
-    return [f"{cleaned}"]
+    return [cleaned]
 
 
 def convert_afisha(date_list, year="2026"):
@@ -235,8 +233,7 @@ def parse_ticket():
             elem['Баннер'] = ''
         try:
             elem['Описание события'] = driver.find_element(By.CLASS_NAME,
-                                                           'sidebar-box__event-title').text.strip().replace('\n',
-                                                                                                               ' ')
+                                                           'content__text').text.strip().replace('\n', ' ')
         except:
             elem['Описание события'] = ''
         for i in driver.find_elements(By.CLASS_NAME, 'sidebar-box'):
@@ -313,7 +310,7 @@ def parse_afisha():
         elem['ID рубрики тикетпро'] = ''
         elem['ID рубрики bezkassira'] = ''
         try:
-            elem['Баннер'] = driver.find_element(By.CLASS_NAME, 'event-image').find_element(By.TAG_NAME, 'img').get_attribute('src')
+            elem['Баннер'] = driver.find_element(By.CSS_SELECTOR, "div.nav__box__with-fixed-menu > img").get_attribute('src')
         except:
             elem['Баннер'] = ''
         try:
@@ -335,6 +332,7 @@ def parse_afisha():
             elem['Организатор'] = ''
         elem['Тип интегратора'] = 'afisha24'
         out.append(elem)
+        print(elem)
     df = pd.DataFrame(out)
     return df
 
@@ -354,54 +352,62 @@ def parse_bezkassira():
             links.append(j.find_element(By.TAG_NAME, 'a').get_attribute('href'))
     links = list(set(links))
     for link in links:
-        driver.get(link)
-        elem = {}
-        elem['Оригинальное название'] = ''
-        elem['Название события'] = driver.find_element(By.CLASS_NAME, 'activity-name').text.strip()
-        elem['ID События'] = int(link.split('-')[-1].replace('/', ''))
-        try:
-            time_event = driver.find_element(By.CLASS_NAME, 'add-calendar')
+        if link.startswith('https://bezkassira'):
+            print(link)
+            driver.get(link)
+            elem = {}
+            elem['Оригинальное название'] = ''
             try:
-                enter = time_event.find_element(By.CLASS_NAME, 'time-enter').text
-                time_event = time_event.text.replace(enter, '').replace('\n', ' ').strip()
+                elem['Название события'] = driver.find_element(By.CLASS_NAME, 'activity-name').text.strip()
             except:
-                time_event = time_event.text.replace('\n', '').strip()
-            time_event = re.sub(r'(\d)(—)', r'\1 —', time_event)
-            elem['Дата проведения'] = convert_bezkassira(time_event)
-        except:
-            elem['Дата проведения'] = ''
-        try:
-            elem['Площадка/место проведения'] = driver.find_elements(By.CLASS_NAME, 'sign-name').text.strip()
-        except:
-            elem['Площадка/место проведения'] = ''
-        elem['place ID afisha24'] = ''
-        elem['ID тикетпроplace'] = ''
-        elem['place ID bezkassira'] = ''
-        rub_tab = driver.find_element(By.CLASS_NAME, 'breadcrumbs')
-        elements = rub_tab.find_elements(By.TAG_NAME, 'a')[1:]
-        rubs_name = ", ".join(sorted({x.text.strip() for x in elements if x.text.strip()}))
-        rubs_id = [rub.get_attribute('href')[:-1].split('/')[-1] for rub in elements]
-        elem['Рубрика - название '] = rubs_name
-        elem['ID рубрики afisha24'] = ''
-        elem['ID  рубрики тикетпро'] = ''
-        elem['ID  рубрики bezkassira'] = rubs_id
-        try:
-            banner = driver.find_element(By.CLASS_NAME, 'img-content')
-            elem['Баннер'] = banner.find_element(By.TAG_NAME, 'img').get_attribute('src')
-        except:
-            elem['Баннер'] = ''
-        try:
-            discription = driver.find_element(By.CLASS_NAME, 'description')
-            elem['Описание события'] = discription.find_element(By.TAG_NAME, 'p').text.strip().replace('\n', ' ')
-        except:
-            elem['Описание события'] = ''
-        try:
-            organise = driver.find_elements(By.CLASS_NAME, 'organise-block')[-1]
-            elem['Организатор'] = organise.find_element(By.CLASS_NAME, 'organise-event__logo').find_element(By.TAG_NAME, 'a').get_attribute('href')
-        except:
-            elem['Организатор'] = ''
-        elem['Тип интегратора'] = 'bezkassira'
-        out.append(elem)
+                elem['Название события'] = ''
+            try:
+                elem['ID События'] = int(link.split('-')[-1].replace('/', ''))
+            except:
+                elem['ID События'] = ''
+            try:
+                time_event = driver.find_element(By.CLASS_NAME, 'add-calendar')
+                try:
+                    enter = time_event.find_element(By.CLASS_NAME, 'time-enter').text
+                    time_event = time_event.text.replace(enter, '').replace('\n', ' ').strip()
+                except:
+                    time_event = time_event.text.replace('\n', '').strip()
+                time_event = re.sub(r'(\d)(—)', r'\1 —', time_event)
+                elem['Дата проведения'] = convert_bezkassira(time_event)
+            except:
+                elem['Дата проведения'] = ''
+            try:
+                elem['Площадка/место проведения'] = driver.find_elements(By.CLASS_NAME, 'sign-name').text.strip()
+            except:
+                elem['Площадка/место проведения'] = ''
+            elem['place ID afisha24'] = ''
+            elem['ID тикетпроplace'] = ''
+            elem['place ID bezkassira'] = ''
+            rub_tab = driver.find_element(By.CLASS_NAME, 'breadcrumbs')
+            elements = rub_tab.find_elements(By.TAG_NAME, 'a')[1:]
+            rubs_name = ", ".join(sorted({x.text.strip() for x in elements if x.text.strip()}))
+            rubs_id = [rub.get_attribute('href')[:-1].split('/')[-1] for rub in elements]
+            elem['Рубрика - название '] = rubs_name
+            elem['ID рубрики afisha24'] = ''
+            elem['ID  рубрики тикетпро'] = ''
+            elem['ID  рубрики bezkassira'] = rubs_id
+            try:
+                banner = driver.find_element(By.CLASS_NAME, 'img-content')
+                elem['Баннер'] = banner.find_element(By.TAG_NAME, 'img').get_attribute('src')
+            except:
+                elem['Баннер'] = ''
+            try:
+                discription = driver.find_element(By.CLASS_NAME, 'description')
+                elem['Описание события'] = discription.find_element(By.TAG_NAME, 'p').text.strip().replace('\n', ' ')
+            except:
+                elem['Описание события'] = ''
+            try:
+                organise = driver.find_elements(By.CLASS_NAME, 'organise-block')[-1]
+                elem['Организатор'] = organise.find_element(By.CLASS_NAME, 'organise-event__logo').find_element(By.TAG_NAME, 'a').get_attribute('href')
+            except:
+                elem['Организатор'] = ''
+            elem['Тип интегратора'] = 'bezkassira'
+            out.append(elem)
     df = pd.DataFrame(out)
     return df
 
@@ -422,9 +428,17 @@ service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
 
-afisha = parse_afisha()
+# afisha = parse_afisha()
+# afisha.to_csv('afisha_03.05.csv')
 kass = parse_bezkassira()
-ticket = parse_ticket()
+kass.to_csv('kass_03.05.csv')
+# ticket = parse_ticket()
+# ticket.to_csv('ticket_03.05.csv')
+
+
+afisha = pd.read_csv('afisha_03.05.csv')
+kass = pd.read_csv('kass_03.05.csv')
+ticket = pd.read_csv('ticket_03.05.csv')
 
 
 df_combined = pd.concat([ticket, kass, afisha], ignore_index=True)
@@ -433,3 +447,4 @@ df_combined['Название события'] = df_combined['Название �
 driver.close()
 result = final_collapse(df_combined)
 result['Дата проведения'] = result['Дата проведения'].astype(str).str.replace(r"[\[\]']", "", regex=True)
+result.to_csv('03.05.2026.csv')
