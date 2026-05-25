@@ -61,6 +61,7 @@ def convert_bezkassira(time_event):
 
     cleaned = re.sub(r'\s*,\s*', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    cleaned = re.sub(r'\b(\d):(\d{2})\b', r'0\1:\2', cleaned)
 
     return [cleaned]
 
@@ -71,14 +72,18 @@ def convert_afisha(date_list, year="2026"):
 
     months_map = {
         'янв': '01', 'фев': '02', 'мар': '03', 'апр': '04',
-        'мая': '05', 'июн': '06', 'июл': '07', 'авг': '08',
+        'мая': '05', 'май': '05', 'июн': '06', 'июл': '07', 'авг': '08',
         'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12'
     }
+
     pattern = r'(\d{1,2})\s+([а-яА-Я]+)\.?(?:\s+(\d{2}:\d{2}))?'
 
     result = []
     for date_str in date_list:
         date_str = date_str.replace('Продано', '').strip()
+
+        date_str = re.sub(r'\b(\d):(\d{2})\b', r'0\1:\2', date_str)
+
         match = re.search(pattern, date_str)
         if match:
             day, month_str, time = match.groups()
@@ -120,14 +125,14 @@ def merge_records(group):
         combined_ids = sorted(list(ids_1 | ids_2), key=lambda x: int(x) if str(x).isdigit() else 0)
         base['ID События'] = ", ".join(map(str, combined_ids))
 
-        v1 = base['Дата проведения'] if isinstance(base['Дата проведения'], list) else (
-            [base['Дата проведения']] if not is_empty(base['Дата проведения']) else [])
-        v2 = row['Дата проведения'] if isinstance(row['Дата проведения'], list) else (
-            [row['Дата проведения']] if not is_empty(row['Дата проведения']) else [])
-
-        combined = sorted(set(str(d).strip('[]').strip() for d in (v1 + v2) if not is_empty(d)))
-        base['Дата проведения'] = ", ".join(combined) if combined else ""
-
+        v1 = base.get('Дата проведения') or []
+        if not isinstance(v1, list):
+            v1 = [v1] if v1 else []
+        v2 = row.get('Дата проведения') or []
+        if not isinstance(v2, list):
+            v2 = [v2] if v2 else []
+        combined = sorted(set(str(d).strip() for d in (v1 + v2) if d and str(d).strip()))
+        base['Дата проведения'] = ", ".join(combined)
         for col in ['Площадка/место проведения', 'Описание события', 'Организатор']:
             if is_empty(base.get(col)) and not is_empty(row.get(col)):
                 base[col] = row[col]
@@ -197,10 +202,11 @@ def parse_ticket():
     links = list(set(links))
     for link in links:
         driver.get(link)
+        print(link)
         elem = {}
         elem['Оригинальное название'] = ''
         elem['Название события'] = driver.find_element(By.CLASS_NAME, 'title').text.replace('\n', ' ').strip()
-        elem['ID События'] = ""
+        elem['ID События'] = ''
         try:
             elem['Дата проведения'] = driver.find_element(By.CLASS_NAME, 'content__event-date').text.strip() + ' ' +  \
                                 driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[1].strip()
@@ -218,7 +224,10 @@ def parse_ticket():
         except:
             elem['Площадка/место проведения'] = ''
         elem['place ID afisha24'] = ''
-        elem['place ID тикетпро'] = driver.find_element(By.CLASS_NAME, 'content__event-place').find_element(By.TAG_NAME, 'a').get_attribute('href')
+        try:
+            elem['place ID тикетпро'] = driver.find_element(By.CLASS_NAME, 'content__event-place').find_element(By.TAG_NAME, 'a').get_attribute('href')
+        except:
+            elem['place ID тикетпро'] = ''
         elem['place ID bezkassira'] = ''
         rubricks = driver.find_element(By.CLASS_NAME, 'breadcrumbs')
         elements = rubricks.find_elements(By.TAG_NAME, 'a')[1:]
@@ -263,12 +272,15 @@ def parse_afisha():
         time.sleep(0.5)
         try:
             for event in driver.find_element(By.CLASS_NAME, 'events__list').find_elements(By.CLASS_NAME, 'events-afisha-li'):
-                afisha_links.append(event.find_element(By.TAG_NAME, 'a').get_attribute('href'))
+                elem = {}
+                elem['link'] = event.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                elem['picture'] = event.find_element(By.TAG_NAME, 'img').get_attribute('src')
+                afisha_links.append(elem)
         except:
             pass
-    df = pd.DataFrame(afisha_links, columns=['links']).drop_duplicates().reset_index(drop=True)
+    df = pd.DataFrame(afisha_links).drop_duplicates().reset_index(drop=True)
     for i in range(0, len(df)):
-        driver.get(df.loc[i, 'links'])
+        driver.get(df.loc[i, 'link'])
         time.sleep(0.5)
         elem = {}
         elem['Оригинальное название'] = ''
@@ -281,15 +293,20 @@ def parse_afisha():
         for one in table.find_elements(By.TAG_NAME, 'tr'):
             try:
                 date_block = one.find_element(By.CLASS_NAME, 'pad-right-td')
-                date = re.sub(r'\n.*?\n', ' ', date_block.text.strip())
+                date = date_block.find_element(By.CLASS_NAME, 'date-num').text.strip() + ' ' + date_block.find_element(
+                    By.CLASS_NAME, 'table-about__text').text.strip()
                 try:
-                    date = date + ' ' + one.find_element(By.CLASS_NAME, 'button__ticket').find_element(By.TAG_NAME, 'span').text.strip()
+                    date = date + ' ' + one.find_element(By.CLASS_NAME, 'button__ticket').find_element(By.TAG_NAME,
+                                                                                                       'span').text.strip()
                 except:
                     pass
                 time_event.append(date)
             except:
                 pass
-        elem['ID События'] = int(df.loc[i, 'links'].split('/')[-1])
+        try:
+            elem['ID События'] = int(df.loc[i, 'link'].split('/')[-1])
+        except:
+            elem['ID События'] = ''
         elem['Дата проведения'] = convert_afisha(time_event)
         try:
             elem['Площадка/место проведения'] = table.find_elements(By.CLASS_NAME, 'link-blue')[-1].text
@@ -310,7 +327,7 @@ def parse_afisha():
         elem['ID рубрики тикетпро'] = ''
         elem['ID рубрики bezkassira'] = ''
         try:
-            elem['Баннер'] = driver.find_element(By.CSS_SELECTOR, "div.nav__box__with-fixed-menu > img").get_attribute('src')
+            elem['Баннер'] = df.loc[i, 'picture']
         except:
             elem['Баннер'] = ''
         try:
@@ -427,19 +444,9 @@ chrome_options.add_argument("--disable-gpu")
 service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-
-# afisha = parse_afisha()
-# afisha.to_csv('afisha_03.05.csv')
+afisha = parse_afisha()
 kass = parse_bezkassira()
-kass.to_csv('kass_03.05.csv')
-# ticket = parse_ticket()
-# ticket.to_csv('ticket_03.05.csv')
-
-
-afisha = pd.read_csv('afisha_03.05.csv')
-kass = pd.read_csv('kass_03.05.csv')
-ticket = pd.read_csv('ticket_03.05.csv')
-
+ticket = parse_ticket()
 
 df_combined = pd.concat([ticket, kass, afisha], ignore_index=True)
 df_combined['Оригинальное название'] = df_combined['Название события']
@@ -447,4 +454,4 @@ df_combined['Название события'] = df_combined['Название �
 driver.close()
 result = final_collapse(df_combined)
 result['Дата проведения'] = result['Дата проведения'].astype(str).str.replace(r"[\[\]']", "", regex=True)
-result.to_csv('03.05.2026.csv')
+result.to_csv('23.05.2026.csv')
