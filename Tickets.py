@@ -189,7 +189,8 @@ def parse_ticket():
     categories = []
     navigation_bar = driver.find_element(By.CLASS_NAME, 'top-menu')
     for cat in navigation_bar.find_elements(By.TAG_NAME, 'li'):
-        categories.append(cat.find_element(By.TAG_NAME, 'a').get_attribute('href'))
+        if 'кино' not in cat.text.lower():
+            categories.append(cat.find_element(By.TAG_NAME, 'a').get_attribute('href'))
     links = []
     for one in categories:
         driver.get(one)
@@ -454,4 +455,3 @@ df_combined['Название события'] = df_combined['Название �
 driver.close()
 result = final_collapse(df_combined)
 result['Дата проведения'] = result['Дата проведения'].astype(str).str.replace(r"[\[\]']", "", regex=True)
-result.to_csv('23.05.2026.csv')
