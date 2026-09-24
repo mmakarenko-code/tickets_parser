@@ -8,6 +8,8 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
 def clean_tags(value):
@@ -188,22 +190,50 @@ def parse_ticket():
     driver.get('https://www.ticketpro.by/')
     categories = []
     navigation_bar = driver.find_element(By.CLASS_NAME, 'top-menu')
-    for cat in navigation_bar.find_elements(By.TAG_NAME, 'li'):
+    cats = navigation_bar.find_elements(By.XPATH, './li')
+    for cat in cats:
         if 'кино' not in cat.text.lower():
             categories.append(cat.find_element(By.TAG_NAME, 'a').get_attribute('href'))
+    categories = [
+        url for url in categories
+        if url.rstrip('/') != 'https://gift.ticketpro.by'
+    ]
+    print(categories)
     links = []
     for one in categories:
         driver.get(one)
         try:
-            tab = driver.find_element(By.CLASS_NAME, 'pjax-preloader')
-            for item in tab.find_elements(By.CLASS_NAME, 'event-box'):
-                links.append(item.find_element(By.TAG_NAME, 'a').get_attribute('href'))
+            pagination = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CLASS_NAME, 'pagination'))
+            )
+            items = pagination.find_elements(By.TAG_NAME, 'li')
+            pages = []
+            for item in items:
+                try:
+                    data_page = item.find_element(By.TAG_NAME, 'a').get_attribute('data-page')
+                    if data_page and data_page.isdigit():
+                        pages.append(int(data_page))
+                except:
+                    pass
+                text = item.text.strip()
+                if text.isdigit():
+                    pages.append(int(text))
+            last_page = max(pages, default=1)
         except:
-            pass
+            last_page = 1
+        print(last_page)
+        for page in range(1, int(last_page)+1):
+            final_link = one + f"?page={str(page)}"
+            driver.get(final_link)
+            try:
+                tab = driver.find_element(By.CLASS_NAME, 'pjax-preloader')
+                for item in tab.find_elements(By.CLASS_NAME, 'event-box'):
+                    links.append(item.find_element(By.TAG_NAME, 'a').get_attribute('href'))
+            except:
+                pass
     links = list(set(links))
     for link in links:
         driver.get(link)
-        print(link)
         elem = {}
         elem['Оригинальное название'] = ''
         elem['Название события'] = driver.find_element(By.CLASS_NAME, 'title').text.replace('\n', ' ').strip()
@@ -445,13 +475,15 @@ chrome_options.add_argument("--disable-gpu")
 service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-afisha = parse_afisha()
-kass = parse_bezkassira()
+# afisha = parse_afisha()
+# kass = parse_bezkassira()
 ticket = parse_ticket()
 
-df_combined = pd.concat([ticket, kass, afisha], ignore_index=True)
-df_combined['Оригинальное название'] = df_combined['Название события']
-df_combined['Название события'] = df_combined['Название события'].apply(clean_string)
-driver.close()
-result = final_collapse(df_combined)
-result['Дата проведения'] = result['Дата проведения'].astype(str).str.replace(r"[\[\]']", "", regex=True)
+ticket.to_csv('ticket_24.09.csv')
+
+# df_combined = pd.concat([ticket, kass, afisha], ignore_index=True)
+# df_combined['Оригинальное название'] = df_combined['Название события']
+# df_combined['Название события'] = df_combined['Название события'].apply(clean_string)
+# driver.close()
+# result = final_collapse(df_combined)
+# result['Дата проведения'] = result['Дата проведения'].astype(str).str.replace(r"[\[\]']", "", regex=True)
