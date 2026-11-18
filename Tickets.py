@@ -1,15 +1,18 @@
 import time
 import re
 import pandas as pd
+import json
+from datetime import datetime
+from urllib.parse import urlsplit
 from fuzzywuzzy import fuzz
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
 
 
 def clean_tags(value):
@@ -186,203 +189,371 @@ def final_collapse(df):
 
 
 def parse_ticket():
-    out = []
-    driver.get('https://www.ticketpro.by/')
-    categories = []
-    navigation_bar = driver.find_element(By.CLASS_NAME, 'top-menu')
-    cats = navigation_bar.find_elements(By.XPATH, './li')
-    for cat in cats:
-        if 'кино' not in cat.text.lower():
-            categories.append(cat.find_element(By.TAG_NAME, 'a').get_attribute('href'))
+    wait = WebDriverWait(driver, 15)
+    menu = (By.CSS_SELECTOR, 'main nav:not([aria-label]) > a[href^="/ru/"]')
+    cards = (By.CSS_SELECTOR, 'main a[class~="group/eventCard"][href^="/ru/event/"]')
+    more = (By.XPATH, "//main//button[normalize-space(.)='Показать больше']")
+    heading = (By.CSS_SELECTOR, "main h1")
+    months = "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split()
+
+    def text(selector, by=By.CSS_SELECTOR):
+        return " ".join(" ".join(e.text.split()) for e in driver.find_elements(by, selector)).strip()
+
+    def format_date(value):
+        date = datetime.fromisoformat(value)
+        return f"{date.day} {months[date.month - 1]} {date:%Y %H:%M}"
+
+    driver.get("https://ticketpro.by/")
     categories = [
-        url for url in categories
-        if url.rstrip('/') != 'https://gift.ticketpro.by'
+        (a.get_attribute("textContent").strip(), a.get_attribute("href"))
+        for a in wait.until(EC.presence_of_all_elements_located(menu))
+        if urlsplit(a.get_attribute("href")).path.rstrip("/") != "/ru/bilety-v-kino"
     ]
-    print(categories)
-    links = []
-    for one in categories:
-        driver.get(one)
-        try:
-            pagination = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, 'pagination'))
-            )
-            items = pagination.find_elements(By.TAG_NAME, 'li')
-            pages = []
-            for item in items:
-                try:
-                    data_page = item.find_element(By.TAG_NAME, 'a').get_attribute('data-page')
-                    if data_page and data_page.isdigit():
-                        pages.append(int(data_page))
-                except:
-                    pass
-                text = item.text.strip()
-                if text.isdigit():
-                    pages.append(int(text))
-            last_page = max(pages, default=1)
-        except:
-            last_page = 1
-        print(last_page)
-        for page in range(1, int(last_page)+1):
-            final_link = one + f"?page={str(page)}"
-            driver.get(final_link)
-            try:
-                tab = driver.find_element(By.CLASS_NAME, 'pjax-preloader')
-                for item in tab.find_elements(By.CLASS_NAME, 'event-box'):
-                    links.append(item.find_element(By.TAG_NAME, 'a').get_attribute('href'))
-            except:
-                pass
-    links = list(set(links))
-    for link in links:
-        driver.get(link)
-        elem = {}
-        elem['Оригинальное название'] = ''
-        elem['Название события'] = driver.find_element(By.CLASS_NAME, 'title').text.replace('\n', ' ').strip()
-        elem['ID События'] = ''
-        try:
-            elem['Дата проведения'] = driver.find_element(By.CLASS_NAME, 'content__event-date').text.strip() + ' ' +  \
-                                driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[1].strip()
-            try:
-                time_event = driver.find_element(By.CLASS_NAME, 'sidebar-box__event-date').text.split(',')[1].strip()
-                elem['Дата проведения'] = driver.find_element(By.CLASS_NAME, 'content__event-date').text.strip().replace(time_event, '') + ' ' + time_event
-            except:
-                pass
-        except:
-            elem['Дата проведения'] = ''
-        if elem['Дата проведения'] != '':
-            elem['Дата проведения'] = [re.sub(r',\s+', ' ', elem['Дата проведения'])]
-        try:
-            elem['Площадка/место проведения'] = driver.find_element(By.CLASS_NAME, 'sidebar-box__event-venue').text.replace('\n', ' ').strip()
-        except:
-            elem['Площадка/место проведения'] = ''
-        elem['place ID afisha24'] = ''
-        try:
-            elem['place ID тикетпро'] = driver.find_element(By.CLASS_NAME, 'content__event-place').find_element(By.TAG_NAME, 'a').get_attribute('href')
-        except:
-            elem['place ID тикетпро'] = ''
-        elem['place ID bezkassira'] = ''
-        rubricks = driver.find_element(By.CLASS_NAME, 'breadcrumbs')
-        elements = rubricks.find_elements(By.TAG_NAME, 'a')[1:]
-        elem['Рубрика - название'] = ", ".join(sorted({x.text.strip() for x in elements if x.text.strip()}))
-        elem['ID рубрики afisha24'] = ''
-        elem['ID рубрики тикетпро'] = [rub.get_attribute('href')[:-1].split('/')[-1] for rub in elements]
-        elem['ID рубрики bezkassira'] = ''
-        try:
-            elem['Баннер'] = driver.find_element(By.CLASS_NAME, 'sidebar-event__head').find_element(By.TAG_NAME,
-                                                                                            'img').get_attribute('src')
-        except:
-            elem['Баннер'] = ''
-        try:
-            elem['Описание события'] = driver.find_element(By.CLASS_NAME,
-                                                           'content__text').text.strip().replace('\n', ' ')
-        except:
-            elem['Описание события'] = ''
-        for i in driver.find_elements(By.CLASS_NAME, 'sidebar-box'):
-            if 'Организатор' in i.text:
-                elem['Организатор'] = i.find_element(By.CLASS_NAME, 'sidebar-box__text').text.strip()
-        elem['Тип интегратора'] = 'ticketpro'
-        out.append(elem)
-    df = pd.DataFrame(out)
-    return df
+    links = {}
+    for name, url in categories:
+        slug = urlsplit(url).path.rstrip("/").split("/")[-1]
+        driver.get(url)
+        wait.until(EC.visibility_of_element_located(heading))
+        while driver.find_elements(*more):
+            count = len(driver.find_elements(*cards))
+            button = wait.until(EC.element_to_be_clickable(more))
+            driver.execute_script("arguments[0].click();", button)
+            wait.until(lambda d: len(d.find_elements(*cards)) > count)
+        for card in driver.find_elements(*cards):
+            links.setdefault(card.get_attribute("href"), {})[name] = slug
+
+    out = []
+    for url, rubrics in links.items():
+        driver.get(url)
+        title = " ".join(wait.until(EC.visibility_of_element_located(heading)).text.split())
+        sessions = []
+        for script in driver.find_elements(By.CSS_SELECTOR, 'script[type="application/ld+json"]'):
+            data = json.loads(script.get_attribute("textContent"))
+            sessions.extend(item for item in data.get("@graph", [data]) if item.get("@type") == "Event")
+
+        dates = list(dict.fromkeys(format_date(s["startDate"]) for s in sessions if s.get("startDate")))
+        header_dates = driver.find_elements(By.CSS_SELECTOR, "main time[datetime]:not(a time)")
+        if not dates:
+            dates = [format_date(e.get_attribute("datetime")) for e in header_dates]
+        if len(header_dates) == 2 and len(sessions) <= 1:
+            dates = [" – ".join(format_date(e.get_attribute("datetime")) for e in header_dates)]
+        venues = [s["location"] for s in sessions if s.get("location")]
+        venue_names = dict.fromkeys(place["name"] for place in venues if place.get("name"))
+        venue_urls = {place["url"] for place in venues if place.get("url")}
+        banner = driver.find_elements(By.CSS_SELECTOR, 'meta[property="og:image"]')
+        organizer = text(
+            "//main//*[@role='region'][@aria-labelledby = "
+            "//main//button[normalize-space(.)='Организатор']/@id]//p[1]",
+            By.XPATH,
+        )
+
+        out.append({
+            "Оригинальное название": "",
+            "Название события": title,
+            "ID События": "",
+            "Дата проведения": dates or "",
+            "Площадка/место проведения": ", ".join(venue_names),
+            "place ID afisha24": "",
+            "place ID тикетпро": next(iter(venue_urls)) if len(venue_urls) == 1 else "",
+            "place ID bezkassira": "",
+            "Рубрика - название": ", ".join(sorted(rubrics)),
+            "ID рубрики afisha24": "",
+            "ID рубрики тикетпро": [rubrics[name] for name in sorted(rubrics)],
+            "ID рубрики bezkassira": "",
+            "Баннер": banner[0].get_attribute("content") if banner else "",
+            "Описание события": text("main .html-content"),
+            "Организатор": organizer,
+            "Тип интегратора": "ticketpro",
+        })
+
+    return pd.DataFrame(out)
+
 
 
 def parse_afisha():
     out = []
-    driver.get('https://24afisha.by/')
-    time.sleep(1)
+    driver.get('https://24afisha.by/ru/minsk')
+    time.sleep(2)
+
     categories = []
-    navigation_bar = driver.find_element(By.CLASS_NAME, 'sub-nav__fixed-yellow__list')
-    expand = navigation_bar.find_element(By.CLASS_NAME, 'dropdown-toggle')
-    expand.click()
-    time.sleep(1)
-    for item in navigation_bar.find_elements(By.TAG_NAME, 'li'):
-        categories.append(item.find_element(By.TAG_NAME, 'a').get_attribute('href'))
-    categories = [url for url in categories if url != 'https://24afisha.by/ru/minsk/events/kino']
+
+    navigation_bar = driver.find_element(
+        By.CLASS_NAME, 'sub-nav__fixed-yellow__list'
+    )
+
+    try:
+        expand = navigation_bar.find_element(
+            By.CLASS_NAME, 'dropdown-toggle'
+        )
+        expand.click()
+        time.sleep(0.5)
+    except:
+        pass
+
+    for item in navigation_bar.find_elements(
+        By.CSS_SELECTOR, 'li.sub-nav__fixed-yellow__item'
+    ):
+        for a in item.find_elements(
+            By.CSS_SELECTOR, 'a[href*="/events/"]'
+        ):
+            href = a.get_attribute('href')
+            if href:
+                categories.append(href)
+
+    categories = list(dict.fromkeys(categories))
+
+    categories = [
+        url for url in categories
+        if '/events/kino' not in url
+    ]
+
     afisha_links = []
+
     for i in categories:
         driver.get(i)
-        time.sleep(0.5)
+        time.sleep(1)
+
         try:
-            for event in driver.find_element(By.CLASS_NAME, 'events__list').find_elements(By.CLASS_NAME, 'events-afisha-li'):
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.CLASS_NAME, 'events__list')
+                )
+            )
+
+            events = driver.find_element(
+                By.CLASS_NAME, 'events__list'
+            ).find_elements(
+                By.CLASS_NAME, 'events-afisha-li'
+            )
+
+            for event in events:
                 elem = {}
-                elem['link'] = event.find_element(By.TAG_NAME, 'a').get_attribute('href')
-                elem['picture'] = event.find_element(By.TAG_NAME, 'img').get_attribute('src')
+
+                try:
+                    elem['link'] = event.find_element(
+                        By.CSS_SELECTOR, 'a[href*="/event/"]'
+                    ).get_attribute('href')
+                except:
+                    continue
+
+                try:
+                    elem['picture'] = event.find_element(
+                        By.TAG_NAME, 'img'
+                    ).get_attribute('src')
+                except:
+                    elem['picture'] = ''
+
                 afisha_links.append(elem)
+
         except:
             pass
-    df = pd.DataFrame(afisha_links).drop_duplicates().reset_index(drop=True)
+
+    df = pd.DataFrame(
+        afisha_links,
+        columns=['link', 'picture']
+    ).drop_duplicates().reset_index(drop=True)
+
     for i in range(0, len(df)):
         driver.get(df.loc[i, 'link'])
         time.sleep(0.5)
+
         elem = {}
         elem['Оригинальное название'] = ''
+
         try:
-            elem['Название события'] = driver.find_element(By.CLASS_NAME, 'event-page__header').text.strip()
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.CLASS_NAME, 'event-page__header')
+                )
+            )
+
+            elem['Название события'] = driver.find_element(
+                By.CLASS_NAME, 'event-page__header'
+            ).text.strip()
+
         except:
             continue
-        table = driver.find_element(By.CLASS_NAME, 'tickets__table')
+
+        try:
+            table = driver.find_element(
+                By.CSS_SELECTOR, 'table.tickets__table'
+            )
+        except:
+            table = None
+
         time_event = []
-        for one in table.find_elements(By.TAG_NAME, 'tr'):
-            try:
-                date_block = one.find_element(By.CLASS_NAME, 'pad-right-td')
-                date = date_block.find_element(By.CLASS_NAME, 'date-num').text.strip() + ' ' + date_block.find_element(
-                    By.CLASS_NAME, 'table-about__text').text.strip()
+
+        if table is not None:
+            for one in table.find_elements(By.TAG_NAME, 'tr'):
                 try:
-                    date = date + ' ' + one.find_element(By.CLASS_NAME, 'button__ticket').find_element(By.TAG_NAME,
-                                                                                                       'span').text.strip()
+                    date_block = one.find_element(
+                        By.CLASS_NAME, 'pad-right-td'
+                    )
+
+                    date = (
+                        date_block.find_element(
+                            By.CLASS_NAME, 'date-num'
+                        ).text.strip()
+                        + ' ' +
+                        date_block.find_element(
+                            By.CLASS_NAME, 'table-about__text'
+                        ).text.strip()
+                    )
+
+                    try:
+                        time_value = one.find_element(
+                            By.CSS_SELECTOR,
+                            '.button__ticket time'
+                        ).get_attribute('datetime')
+
+                        if not time_value:
+                            time_value = one.find_element(
+                                By.CSS_SELECTOR,
+                                '.button__ticket span'
+                            ).text.strip()
+
+                        if time_value:
+                            date += ' ' + time_value
+
+                    except:
+                        pass
+
+                    time_event.append(date)
+
                 except:
                     pass
-                time_event.append(date)
-            except:
-                pass
+
         try:
-            elem['ID События'] = int(df.loc[i, 'link'].split('/')[-1])
+            event_id = df.loc[i, 'link'].rstrip('/').split('/')[-1]
+            elem['ID События'] = int(event_id)
         except:
             elem['ID События'] = ''
+
         elem['Дата проведения'] = convert_afisha(time_event)
+
         try:
-            elem['Площадка/место проведения'] = table.find_elements(By.CLASS_NAME, 'link-blue')[-1].text
+            place = table.find_elements(
+                By.CSS_SELECTOR,
+                'a.link-blue[href*="/object/"]'
+            )[-1]
+
+            elem['Площадка/место проведения'] = place.text.strip()
+
         except:
             elem['Площадка/место проведения'] = ''
+
         try:
-            elem['place ID afisha24'] = int(table.find_elements(By.CLASS_NAME, 'link-blue')[-1].get_attribute('href').split('/')[-1])
+            place_id = place.get_attribute('href').rstrip('/').split('/')[-1]
+            elem['place ID afisha24'] = int(place_id)
         except:
             elem['place ID afisha24'] = ''
-        rubricks = driver.find_element(By.CLASS_NAME, 'breadcrumbs')
-        elements = rubricks.find_elements(By.TAG_NAME, 'a')[1:]
-        rubs_id = [x.get_attribute('href') for x in elements]
-        rubs_name = ", ".join(sorted({x.text.strip() for x in elements if x.text.strip()}))
+
+        try:
+            rubricks = driver.find_element(
+                By.CSS_SELECTOR, 'div.breadcrumbs'
+            )
+
+            elements = rubricks.find_elements(
+                By.CSS_SELECTOR, 'a.breadcrumbs__item'
+            )[1:]
+
+            rubs_id = [
+                x.get_attribute('href')
+                for x in elements
+            ]
+
+            rubs_name = ", ".join(
+                sorted({
+                    x.text.strip()
+                    for x in elements
+                    if x.text.strip()
+                })
+            )
+
+        except:
+            rubs_id = []
+            rubs_name = ''
+
         elem['place ID тикетпро'] = ''
         elem['place ID bezkassira'] = ''
+
         elem['Рубрика - название'] = rubs_name
         elem['ID рубрики afisha24'] = rubs_id
+
         elem['ID рубрики тикетпро'] = ''
         elem['ID рубрики bezkassira'] = ''
+
         try:
             elem['Баннер'] = df.loc[i, 'picture']
         except:
             elem['Баннер'] = ''
+
         try:
+            more = driver.find_element(
+                By.CLASS_NAME, 'event-page_desc__more'
+            )
             ActionChains(driver).move_to_element(
-                driver.find_element(By.CLASS_NAME, 'event-page_desc__more')).perform()
-            time.sleep(0.5)
-            driver.find_element(By.CLASS_NAME, 'event-page_desc__more').click()
-            elem['Описание события'] = driver.find_element(By.CLASS_NAME, 'event-page_desc__about-body').text.strip().replace('\n', ' ')
+                more
+            ).perform()
+
+            time.sleep(0.3)
+            more.click()
+
+        except:
+            pass
+
+        try:
+            elem['Описание события'] = driver.find_element(
+                By.CLASS_NAME,
+                'event-page_desc__about-body'
+            ).text.strip().replace('\n', ' ')
+
+        except:
+            elem['Описание события'] = ''
+
+        try:
+            elem['Организатор'] = driver.find_element(
+                By.CSS_SELECTOR,
+                '.table-about__header a[href*="/organizer/"]'
+            ).get_attribute('href')
+
         except:
             try:
-                elem['Описание события'] = driver.find_element(By.CLASS_NAME,
-                                                               'event-page_desc__about-body').text.strip().replace('\n',
-                                                                                                                   ' ')
+                elem['Организатор'] = driver.find_element(
+                    By.CSS_SELECTOR,
+                    'a.link-blue[href*="/organizer/"]'
+                ).get_attribute('href')
             except:
-                elem['Описание события'] = ''
-        try:
-            elem['Организатор'] = driver.find_element(By.CLASS_NAME, 'create-company').find_element(By.TAG_NAME, 'a').get_attribute('href')
-        except:
-            elem['Организатор'] = ''
+                elem['Организатор'] = ''
+
         elem['Тип интегратора'] = 'afisha24'
+
         out.append(elem)
-        print(elem)
-    df = pd.DataFrame(out)
+
+    df = pd.DataFrame(
+        out,
+        columns=[
+            'Оригинальное название',
+            'Название события',
+            'ID События',
+            'Дата проведения',
+            'Площадка/место проведения',
+            'place ID afisha24',
+            'place ID тикетпро',
+            'place ID bezkassira',
+            'Рубрика - название',
+            'ID рубрики afisha24',
+            'ID рубрики тикетпро',
+            'ID рубрики bezkassira',
+            'Баннер',
+            'Описание события',
+            'Организатор',
+            'Тип интегратора'
+        ]
+    )
+
     return df
+
 
 
 def parse_bezkassira():
@@ -401,7 +572,6 @@ def parse_bezkassira():
     links = list(set(links))
     for link in links:
         if link.startswith('https://bezkassira'):
-            print(link)
             driver.get(link)
             elem = {}
             elem['Оригинальное название'] = ''
@@ -475,11 +645,11 @@ chrome_options.add_argument("--disable-gpu")
 service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-# afisha = parse_afisha()
-# kass = parse_bezkassira()
+afisha = parse_afisha()
+kass = parse_bezkassira()
 ticket = parse_ticket()
 
-ticket.to_csv('ticket_24.09.csv')
+afisha.to_csv('afisha_17.11.csv')
 
 # df_combined = pd.concat([ticket, kass, afisha], ignore_index=True)
 # df_combined['Оригинальное название'] = df_combined['Название события']
